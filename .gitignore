@@ -1,0 +1,9 @@
+# ключ service account, id таблицы и ссылка на Диск — только локально
+secrets/*
+!secrets/README.md
+
+# сборка
+/cu-board
+dist/
+
+.DS_Store
