@@ -3,6 +3,7 @@ package main
 import (
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -171,4 +172,28 @@ var hwRe = regexp.MustCompile(`(?i)домашн|(^|[^\pL])дз([^\pL]|$)`)
 
 func isHomework(name string) bool {
 	return hwRe.MatchString(name) && !strings.Contains(strings.ToLower(name), "бонус")
+}
+
+// ignoreList — курсы, которые не учитываются нигде: ни в синке, ни в расчётах.
+type ignoreList []string
+
+// has: строка списка — id курса или часть названия (без учёта регистра и эмодзи).
+func (l ignoreList) has(courseID int, name string) bool {
+	low := strings.ToLower(cleanName(name))
+	for _, e := range l {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if id, err := strconv.Atoi(e); err == nil {
+			if id == courseID {
+				return true
+			}
+			continue
+		}
+		if strings.Contains(low, strings.ToLower(cleanName(e))) {
+			return true
+		}
+	}
+	return false
 }

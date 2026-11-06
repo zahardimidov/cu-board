@@ -41,6 +41,7 @@ type Store interface {
 	Save(st Student, rows []Row) error
 	Load() ([]Student, []Row, error)
 	Delete(studentID string) error
+	Ignored() ([]string, error) // курсы, которые не учитываем вообще (SOFT и т.п.)
 	Name() string
 }
 
@@ -77,7 +78,13 @@ func openStore() (Store, error) {
 
 // ---------- Google Sheets ----------
 
-const metaTab = "meta"
+const (
+	metaTab   = "meta"
+	ignoreTab = "ignore"
+)
+
+// defaultIgnored — чем заполнить вкладку ignore при её создании.
+var defaultIgnored = []string{"Стресс-менеджмент и эмоциональный интеллект"}
 
 type tabSpec struct {
 	name    string
@@ -124,7 +131,7 @@ func (s *sheetStore) ensureTabs() error {
 		have[sh.Properties.Title] = true
 	}
 	var reqs []*sheets.Request
-	for _, name := range []string{dataTab.name, studentsTab.name, metaTab} {
+	for _, name := range []string{dataTab.name, studentsTab.name, metaTab, ignoreTab} {
 		if !have[name] {
 			reqs = append(reqs, &sheets.Request{AddSheet: &sheets.AddSheetRequest{Properties: &sheets.SheetProperties{Title: name}}})
 		}
@@ -155,7 +162,17 @@ func (s *sheetStore) ensureTabs() error {
 	}
 
 	// заголовки и версию пишем всегда — чтобы они соответствовали текущему формату
-	headers := []*sheets.ValueRange{{Range: metaTab + "!A1", Values: [][]any{{"data_version", dataVersion}}}}
+	headers := []*sheets.ValueRange{
+		{Range: metaTab + "!A1", Values: [][]any{{"data_version", dataVersion}}},
+		{Range: ignoreTab + "!A1", Values: [][]any{{"Не учитывать курсы (часть названия или id курса, по одному в строке)"}}},
+	}
+	if !have[ignoreTab] {
+		var vals [][]any
+		for _, c := range defaultIgnored {
+			vals = append(vals, []any{c})
+		}
+		headers = append(headers, &sheets.ValueRange{Range: ignoreTab + "!A2", Values: vals})
+	}
 	for _, t := range []tabSpec{dataTab, studentsTab} {
 		headers = append(headers, &sheets.ValueRange{Range: t.name + "!A1", Values: [][]any{t.header}})
 	}
@@ -249,6 +266,20 @@ func (s *sheetStore) Save(st Student, rows []Row) error {
 	return s.upsert(studentsTab, [][]any{{st.ID, st.Name, st.LateDays, st.Updated.Format(time.RFC3339)}}, st.ID)
 }
 
+func (s *sheetStore) Ignored() ([]string, error) {
+	resp, err := s.svc.Spreadsheets.Values.Get(s.id, ignoreTab+"!A2:A").ValueRenderOption("UNFORMATTED_VALUE").Do()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, v := range resp.Values {
+		if len(v) > 0 {
+			out = append(out, fmt.Sprint(v[0]))
+		}
+	}
+	return out, nil
+}
+
 // Delete убирает все строки студента: upsert с пустым набором удаляет все «свои» строки.
 func (s *sheetStore) Delete(studentID string) error {
 	if err := s.upsert(dataTab, nil, studentID); err != nil {
@@ -315,6 +346,15 @@ type fileDB struct {
 }
 
 func (f *fileStore) Name() string { return "локальный файл " + f.path }
+
+// Ignored для локального режима: ~/.cu-board/ignore.txt, по курсу в строке.
+func (f *fileStore) Ignored() ([]string, error) {
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(f.path), "ignore.txt"))
+	if err != nil {
+		return defaultIgnored, nil
+	}
+	return strings.Split(string(b), "\n"), nil
+}
 
 func (f *fileStore) read() fileDB {
 	var db fileDB

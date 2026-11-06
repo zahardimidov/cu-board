@@ -80,7 +80,18 @@ func run(cmd string) error {
 	if err != nil {
 		return err
 	}
-	return runTUI(students, rows, meID)
+	// скрываем игнорируемые курсы и у тех, кто ещё не пересинкался
+	ign, err := store.Ignored()
+	if err != nil {
+		return err
+	}
+	kept := rows[:0]
+	for _, r := range rows {
+		if !ignoreList(ign).has(r.CourseID, r.Course) {
+			kept = append(kept, r)
+		}
+	}
+	return runTUI(students, kept, meID)
 }
 
 func sync(lms *LMS, me Me, store Store) error {
@@ -89,9 +100,18 @@ func sync(lms *LMS, me Me, store Store) error {
 	if err != nil {
 		return err
 	}
+	ign, err := store.Ignored()
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	rows := make([]Row, 0, len(courses))
+	skipped := 0
 	for _, c := range courses {
+		if ignoreList(ign).has(c.ID, c.Name) {
+			skipped++ // в таблицу не пишем; старые строки удалит Save
+			continue
+		}
 		rows = append(rows, Row{StudentID: me.ID, Student: me.Display(), CourseID: c.ID, Course: c.Name, Kind: c.Kind,
 			Percent: c.Percent, Score: c.Score, HWDone: c.HWDone, HWTotal: c.HWTotal, Updated: now})
 	}
@@ -99,7 +119,11 @@ func sync(lms *LMS, me Me, store Store) error {
 	if err := store.Save(st, rows); err != nil {
 		return err
 	}
-	fmt.Printf("✓ %d курсов сохранено (%s)\n", len(rows), store.Name())
+	fmt.Printf("✓ %d курсов сохранено (%s)", len(rows), store.Name())
+	if skipped > 0 {
+		fmt.Printf(", %d не учитываются (вкладка ignore)", skipped)
+	}
+	fmt.Println()
 	return nil
 }
 
